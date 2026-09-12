@@ -1,7 +1,7 @@
 #include <map>
 #include <string>
 #include <vector>
-#include "dataframe.hpp"
+// #include "dataframe.hpp"
 
 namespace rapidcsv {
   class Document;
@@ -9,11 +9,6 @@ namespace rapidcsv {
 
 
 namespace PAT {
-// typedef float Real;
-// const std::string HOME_DIR="/var/tmp/pat/";
-
-
-
 std::string DownloadLog(const std::string &device, const std::string &lot, const std::string &spec,
   const std::string &condition, const std::vector<std::string> &parameters);
 

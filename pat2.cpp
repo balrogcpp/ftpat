@@ -13,7 +13,7 @@
 #include <unordered_map>
 
 // format is not available on apple
-#if __has_include(<format>) && ((defined(_MSVC_LANG) && _MSVC_LANG >= 202002L) \
+#if ((defined(_MSVC_LANG) && _MSVC_LANG >= 202002L) \
     || (defined(__cplusplus) && __cplusplus >= 202002L && !defined(__APPLE__)))
   #include <chrono>
   #include <format>
@@ -141,7 +141,7 @@ rapidcsv::Document FilterLog(const std::string &device, const std::string &basel
   futures.reserve(conList.size());
   for (size_t i = 0; i < conList.size(); ++i) {
     futures.emplace_back(std::async(std::launch::async, [&, i]() {
-      std::string log = Convert(device, lot, conList[i], parameters[conList[i]], useSublot);
+      std::string log = Convert_v1(device, lot, conList[i], parameters[conList[i]], useSublot);
       write_to_file(HOME_DIR + lot + "_" + conList[i] + ".csv", log);
       std::istringstream istr(log);
       logs[i] = rapidcsv::Document(istr, rapidcsv::LabelParams(0, -1));
@@ -186,7 +186,6 @@ rapidcsv::Document FilterLog(const std::string &device, const std::string &basel
                 continue;
             }
 
-            // not necessary to be here, but it saves memory
             if (lastCondition && useSublot) {
                 if (Row[lot_id] != lot) {
                     continue;
@@ -224,13 +223,6 @@ rapidcsv::Document FilterLog(const std::string &device, const std::string &basel
             if (!isPass || !is_uint(id) || timeStamp.empty()) {
                 continue;
             }
-
-            // not necessary to be here, but it saves memory
-            // if (lastCondition && useSublot) {
-            //     if (Row[lot_id] != lot) {
-            //         continue;
-            //     }
-            // }
 
             bool rowIsValid = (uniqueID.find(id) != uniqueID.end() && timeStamp == uniqueID[id]);
 
@@ -279,6 +271,7 @@ rapidcsv::Document FilterLog(const std::string &device, const std::string &basel
     }
 
   string buf;
+  buf.reserve(merged.size() * parameters.size() * 20);
   buf = "id,wafer,site";
   for (vector<string>::const_reverse_iterator it = conList.rbegin(); it != conList.rend(); ++it) {
     for (const auto &param : parameters[*it]) {

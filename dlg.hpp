@@ -69,6 +69,58 @@ inline std::pair<int, bool> RemoveFilesOlderThan(const fs::path &dir, unsigned i
 }
 
 
+std::vector<std::pair<std::string, std::string>> GrabFiles(const std::string &dir, const std::string &lot, const std::string &step, bool exactLot=false) {
+  using namespace std;
+  vector<std::pair<std::string, std::string>> result;
+
+  if (!fs::is_directory(dir)) {
+    return {};
+  }
+
+  vector<fs::directory_entry> logs;
+  for (const auto& entry : fs::directory_iterator(dir)) {
+    string filename = entry.path().filename().string();
+    string _lot_ = exactLot ? "_"+lot+"_" : "_"+lot;
+    if (filename.find(_lot_) != string::npos && filename.find(step) != string::npos && filename.find(".dlg") != string::npos) {
+      logs.push_back(entry);
+    }
+  }
+
+  // Sort by last modification time (older first)
+  auto is_older = [](const fs::directory_entry& a, const fs::directory_entry& b) {
+      return fs::last_write_time(a) < fs::last_write_time(b);
+  };
+  std::sort(logs.begin(), logs.end(), is_older);
+
+
+
+  for (const auto& entry : logs) {
+    string path = entry.path().string();
+    string ext = entry.path().extension().string();
+
+    if (ext == ".locked") {
+      path.erase(path.size() - ext.size());
+    }
+    if (ends_with(path,"Data.dlg")) {
+
+      string table_path = path;
+      table_path.replace(table_path.find("Data.dlg"), sizeof("Data.dlg") - 1, "TestTable");
+      if (fs::exists(table_path)) {
+        result.push_back({path, table_path});
+      }
+    } 
+  }
+
+  ostringstream hashes;
+  for (const auto &it : result) {
+      hashes << it.first << ' ' << fs::file_size(it.first) << '\n';
+      hashes << it.second << ' ' << fs::file_size(it.second) << '\n';
+  }
+  async_write(lot+"_"+step+".txt", hashes.str());
+
+  return result;
+}
+
 
 
 #if __cplusplus >= 202002L
@@ -85,7 +137,7 @@ inline std::pair<int, bool> RemoveFilesOlderThan(const fs::path &dir, unsigned i
     }
   };
 #endif
-std::string Convert(const std::string &device, const std::string &lot, const std::string &step, const std::vector<std::string> &parameters, bool exactLot=false) {
+std::string Convert_v1(const std::string &device, const std::string &lot, const std::string &step, const std::vector<std::string> &parameters, bool exactLot=true) {
   using namespace std;
 
 #ifndef M_XTD
@@ -102,66 +154,11 @@ std::string Convert(const std::string &device, const std::string &lot, const std
   if (!fs::is_directory(HOME_DIR)) {
       fs::create_directory(HOME_DIR);
   }
-  vector<fs::directory_entry> logs;
-  vector<fs::directory_entry> tables;
-
-// #if 0
-//   for (const auto& entry : fs::directory_iterator(dir)) {
-//     auto filename = entry.path().filename();
-//     string _lot_ = exactLot ? "_"+lot+"_" : "_"+lot;
-//     if (filename.string().find(_lot_) != string::npos) {
-//       if (filename.string().find(step) != string::npos) {
-//         string ext = filename.extension().string();
-//         if (ext == ".dlg" || ext == ".locked") {
-//           logs.push_back(entry);
-//         } else if (ends_with(filename.string(),"TestTable")) {
-//           tables.push_back(entry);
-//         }
-//       }
-//     }
-//   }
-// #else
-  for (const auto& entry : fs::directory_iterator(dir)) {
-    string filename = entry.path().filename().string();
-    string path = entry.path().string();
-    string ext = entry.path().extension().string();
-    string _lot_ = exactLot ? "_"+lot+"_" : "_"+lot;
-
-    if (filename.find(_lot_) != string::npos && filename.find(step) != string::npos) {
-        if (ext == ".locked") {
-          filename.erase(filename.size() - ext.size());
-          path.erase(path.size() - ext.size());
-        }
-        if (ends_with(filename,"Data.dlg")) {
-          string table_path = path.replace(path.find("Data.dlg"), sizeof("Data.dlg") - 1, "TestTable");
-          if (fs::exists(table_path)) {
-            logs.push_back(entry);
-            tables.push_back(fs::directory_entry(table_path));
-          }
-        } 
-    }
-  }
-// #endif
-
-  // Sort by last modification time (older first)
-  auto is_older = [](const fs::directory_entry& a, const fs::directory_entry& b) {
-      return fs::last_write_time(a) < fs::last_write_time(b);
-  };
-  std::sort(logs.begin(), logs.end(), is_older);
-  std::sort(tables.begin(), tables.end(), is_older);
-
-  // simple sanity check, every log should have coresponding table
-  if (tables.empty() || logs.empty() || tables.size() != logs.size()) {
+  if (!fs::is_directory(HOME_DIR)) {
     return {};
   }
 
-  ostringstream hashes;
-  for (auto it = logs.begin(), jt = tables.begin(); it!=logs.end(), jt!=tables.end(); ++it, ++jt) {
-      hashes << it->path().filename().string() << ' ' << it->file_size() << '\n';
-      hashes << jt->path().filename().string() << ' ' << jt->file_size() << '\n';
-  }
-  async_write(HOME_DIR+lot+"_"+step+".txt", hashes.str());
-
+  auto logs = GrabFiles(dir, lot, step, exactLot);
 
   //  c++ std before 20 does not support heterogeneous lookup (required to use string_view to search)
   // https://www.cppstories.com/2021/heterogeneous-access-cpp20/
@@ -175,10 +172,13 @@ std::string Convert(const std::string &device, const std::string &lot, const std
       params.insert(it);
   }
 
+
+
   string buf;
-  for (auto it = tables.begin(), jt = logs.begin(); it!=tables.end(), jt!=logs.end(); ++it, ++jt) {
-      ifstream table(it->path());
-      ifstream log(jt->path());
+  buf.reserve(1024 * 1024 * 10); // reserve 10MB for buffer
+  for (const auto &entry : logs) {
+      ifstream log(entry.first);
+      ifstream table(entry.second);
       vector<string> header = {"lot id","die timestamp","site number","bincode type","part id"};
 #if __cplusplus >= 202002L
       unordered_set<string, string_hash, std::equal_to<>> codes;
@@ -240,10 +240,11 @@ std::string Convert(const std::string &device, const std::string &lot, const std
                     string_view val = splits[3];
                     str.append(",").append(val.data(), val.size());
                   }
-
                 } else if (starts_with(line,"38 ")) { // new part with timestamp
-                    // isGood &= (paramCounter == codes.size()); // die is good only if all parameters are found
-                    isGood &= (std::count(str.begin(), str.end(), ',') == header.size()-1); // die is good only if all parameters are found
+                    paramCounter++;
+                    paramCounter++;
+                    isGood &= (paramCounter == header.size()); // die is good only if all parameters are found
+                    // isGood &= (std::count(str.begin(), str.end(), ',') == header.size()-1); // die is good only if all parameters are found
                     if (isGood) {
                         buf.append(str);
                     }
@@ -253,20 +254,25 @@ std::string Convert(const std::string &device, const std::string &lot, const std
                     string_view val =  split(line, " ,")[1];
                     str.append("\n").append(lotname).append(",").append(val.data(), val.size());
                 } else if (starts_with(line,"27 ")) { // site number
+                    paramCounter++;
                     string_view val = split(line)[1];
                     str.append(",").append(val.data(), val.size());
                 } else if (starts_with(line,"28 ")) { // bincode
+                    paramCounter++;
                     int bin = atoi(split(line)[1].data());
                     bool isPass = (bin < 200);
                     isGood &= isPass;
                     str.append(",").append(isPass ? "P" : "F");
                 } else if (starts_with(line,"53 ")) { // part id
+                    paramCounter++;
                     string_view val = split(line)[1];
                     str.append(",").append(val.data(), val.size());
                 }
             }
-            // isGood &= (paramCounter == codes.size()); // die is good only if all parameters are found
-            isGood &= (std::count(str.begin(), str.end(), ',') == header.size()-1); // die is good only if all parameters are found
+            paramCounter++;
+            paramCounter++;
+            isGood &= (paramCounter == header.size()); // die is good only if all parameters are found
+            // isGood &= (std::count(str.begin(), str.end(), ',') == header.size()-1); // die is good only if all parameters are found
             if (isGood) {
                 buf.append(str);
             }
@@ -276,7 +282,7 @@ std::string Convert(const std::string &device, const std::string &lot, const std
     return buf;
 }
 
-std::string Convert_2(const std::string &device, const std::string &lot, const std::string &step, const std::vector<std::string> &parameters, bool onlyPass=true, bool exactLot=false) {
+std::string Convert_v2(const std::string &device, const std::string &lot, const std::string &step, const std::vector<std::string> &parameters, bool onlyPass=true, bool exactLot=false) {
   using namespace std;
 
 #ifndef M_XTD
@@ -293,9 +299,11 @@ std::string Convert_2(const std::string &device, const std::string &lot, const s
   if (!fs::is_directory(HOME_DIR)) {
       fs::create_directory(HOME_DIR);
   }
-  vector<fs::directory_entry> logs;
-  vector<fs::directory_entry> tables;
-  //  c++ std before 20 does not support heterogeneous lookup (required to use string_view to search)
+  if (!fs::is_directory(HOME_DIR)) {
+    return {};
+  }
+
+    //  c++ std before 20 does not support heterogeneous lookup (required to use string_view to search)
   // https://www.cppstories.com/2021/heterogeneous-access-cpp20/
 #if __cplusplus >= 202002L
   unordered_set<string, string_hash, std::equal_to<>> params;
@@ -307,62 +315,15 @@ std::string Convert_2(const std::string &device, const std::string &lot, const s
       params.insert(it);
   }
 
-  // Collect files from /mnt/log
-  for (const auto& entry : fs::directory_iterator(dir)) {
-    auto filename = entry.path().filename();
-    string _lot_ = exactLot ? "_"+lot+"_" : "_"+lot;
-    if (filename.string().find(_lot_) != string::npos) {
-      if (filename.string().find(step) != string::npos) {
-        string ext = filename.extension().string();
-        if (ext == ".dlg" || ext == ".locked") {
-          logs.push_back(entry);
-        } else if (ends_with(filename.string(),"TestTable")) {
-          tables.push_back(entry);
-        }
-      }
-    }
-  }
-  // for (const auto& entry : fs::directory_iterator(dir)) {
-  //   string filename = entry.path().filename().string();
-  //   string path = entry.path().string();
-  //   string ext = entry.path().extension().string();
-  //   string _lot_ = exactLot ? "_"+lot+"_" : "_"+lot;
 
-  //   if (filename.find(_lot_) != string::npos && filename.find(step) != string::npos) {
-  //       if (ext == ".locked") {
-  //         filename.erase(filename.size() - ext.size());
-  //       }
-  //       if (ends_with(filename,"Data.dlg")) {
-  //         string table_path = path.replace(path.find("Data.dlg"), sizeof("Data.dlg") - 1, "TestTable");
-  //         if (fs::exists(table_path)) {
-  //           logs.push_back(entry);
-  //           tables.push_back(fs::directory_entry(table_path));
-  //         }
-  //       } 
-  //   }
-  // }
+  auto logs = GrabFiles(dir, lot, step, exactLot);
 
-  // Sort by last modification time (older first)
-  auto is_older = [](const fs::directory_entry& a, const fs::directory_entry& b) {
-      return fs::last_write_time(a) < fs::last_write_time(b);
-  };
-  std::sort(logs.begin(), logs.end(), is_older);
-  std::sort(tables.begin(), tables.end(), is_older);
 
-  // simple sanity check, every log should have coresponding table
-  if (tables.empty() || tables.size() != logs.size()) {
-    return {};
-  }
-
-  ostringstream hashes;
-  for (auto it = logs.begin(); it!=logs.end(); ++it) {
-      hashes << it->path().filename().string() << ' ' << it->file_size() << '\n';
-  }
-  async_write(HOME_DIR+lot+"_"+step+".txt", hashes.str());
   string buf;
-  for (auto it = tables.begin(), jt = logs.begin(); it!=tables.end(), jt!=logs.end(); ++it, ++jt) {
-      ifstream table(it->path());
-      ifstream log(jt->path());
+  buf.reserve(1024 * 1024 * 10); // reserve 10MB for buffer
+  for (const auto &entry : logs) {
+      ifstream log(entry.first);
+      ifstream table(entry.second);
       vector<string> header = {"lot id","die timestamp","site number","bincode type","part id"};
       vector<string> order; // same as header but codes
 #if __cplusplus >= 202002L
@@ -370,19 +331,20 @@ std::string Convert_2(const std::string &device, const std::string &lot, const s
 #else
       unordered_map<string, string> codes;
 #endif
-      if (table.is_open()) {
+      if (table) {
           string line;
           for (size_t code = 1; std::getline(table,line); ++code) {
               string_view parameter = strip(split(line)[0], '\"');
 #if __cplusplus >= 202002L
-              if (params.find(parameter) != params.end()) {
+              if (params.find(parameter) != params.end())
 #else
-              if (params.find(string(parameter)) != params.end()) {
+              if (params.find(std::string(parameter)) != params.end())
 #endif
+              {
                   header.emplace_back(parameter);
                   string code_str = std::to_string(code);
                   order.emplace_back(code_str);
-                  codes.insert(make_pair(code_str, parameter));
+                  codes.insert(std::make_pair(code_str, parameter));
               }
           }
       }
@@ -402,9 +364,9 @@ std::string Convert_2(const std::string &device, const std::string &lot, const s
       if (log.is_open()) {
         string line; // line from dlg file
 #if __cplusplus >= 202002L
-        unordered_map<string, string, string_hash, std::equal_to<>> row;
+        unordered_map<string, string, string_hash, std::equal_to<>> str;
 #else
-        unordered_map<string, string> row;
+        unordered_map<string, string> str;
 #endif
         string lotname;
         bool isPass = false;
@@ -428,35 +390,35 @@ std::string Convert_2(const std::string &device, const std::string &lot, const s
                   {
                     string_view code = splits[1];
                     string_view val = splits[3];
-                    row[codes[string(code)]] = string(val);
+                    str[codes[string(code)]] = string(val);
                   }
 
                 } else if (starts_with(line,"38 ")) { // new part, contains part is and time
-                  if (!row.empty() && isPass) {
+                  if (!str.empty() && isPass) {
                     for (auto &it : header) {
-                        buf.append(row[it]).append(",");
+                        buf.append(str[it]).append(",");
                     }
                     buf[buf.size()-1] = '\n'; // replace last comma with newline
                   }
-                    row.clear();
+                    str.clear();
                     string_view val =  split(line, " ,")[1];
-                    row["lot id"] = lotname;
-                    row["die timestamp"] = string(val.data(), val.size());
+                    str["lot id"] = lotname;
+                    str["die timestamp"] = string(val.data(), val.size());
                 } else if (starts_with(line,"27 ")) { // site number
                     string_view val = split(line)[1];
-                    row["site number"] = string(val.data(), val.size());
+                    str["site number"] = string(val.data(), val.size());
                 } else if (starts_with(line,"28 ")) { // bincode
                     int bin = atoi(split(line)[1].data());
                     isPass = (bin < 200);
-                    row["bincode type"] = isPass ? "P" : "F";
+                    str["bincode type"] = isPass ? "P" : "F";
                 } else if (starts_with(line,"53 ")) { // part id
                     string_view val = split(line)[1];
-                    row["part id"] = string(val.data(), val.size());
+                    str["part id"] = string(val.data(), val.size());
                 }
             }
-            if (!row.empty() && isPass) {
+            if (!str.empty() && isPass) {
               for (auto &it : header) {
-                  buf.append(row[it]).append(",");
+                  buf.append(str[it]).append(",");
               }
               buf[buf.size()-1] = '\n'; // replace last comma with newline
             }
