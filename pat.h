@@ -15,7 +15,7 @@ std::string DownloadLog(const std::string &device, const std::string &lot, const
 
   
 rapidcsv::Document FilterLog(const std::string &device, const std::string &baselot, const std::string &lot, const std::vector<std::string> &conList,
-   const std::vector<std::string> &patlist, const std::vector<std::vector<std::string>> &mdlist, bool exactLot=false);
+   const std::vector<std::string> &patlist, const std::vector<std::vector<std::string>> &mdlist, bool exactLot=true);
 
 
 void PerformUD(const rapidcsv::Document &logFile, const std::string &lot, const std::vector<std::string> &parameters, const std::vector<std::string> &separate = {});

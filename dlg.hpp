@@ -101,11 +101,14 @@ std::vector<std::pair<std::string, std::string>> GrabFiles(const std::string &di
     if (ext == ".locked") {
       path.erase(path.size() - ext.size());
     }
-    if (ends_with(path,"Data.dlg")) {
 
+    if (ends_with(path,"Data.dlg")) {
       string table_path = path;
       table_path.replace(table_path.find("Data.dlg"), sizeof("Data.dlg") - 1, "TestTable");
       if (fs::exists(table_path)) {
+        if (ext == ".locked") {
+          path.append(ext);
+        }
         result.push_back({path, table_path});
       }
     } 
@@ -216,7 +219,7 @@ std::string Convert_v1(const std::string &device, const std::string &lot, const 
         string line; // line from dlg file
         string str; // string to hold current row, will be appended to buf when new part is found
         string lotname;
-        bool isGood = true; // die is exported only if good
+        bool isGood = false; // die is exported only if good
         int paramCounter = 0; // count of parameters found for current die
 
         while(getline(log, line)) {
@@ -230,6 +233,9 @@ std::string Convert_v1(const std::string &device, const std::string &lot, const 
           while(getline(log, line)) {
               if (starts_with(line,"30 ")) { // evaluated parameters
                   const std::vector<string_view> &splits = split(line);
+                  if (splits.size() != 4) {
+                      continue;
+                  }
 #if __cplusplus >= 202002L
                   if (codes.find(splits[1]) != codes.end())
 #else
@@ -241,38 +247,58 @@ std::string Convert_v1(const std::string &device, const std::string &lot, const 
                     str.append(",").append(val.data(), val.size());
                   }
                 } else if (starts_with(line,"38 ")) { // new part with timestamp
+                    vector<string_view> splits = split(line, " ,");
+                    if (splits.size() != 3) {
+                        continue;
+                    }
+                    string_view val =  splits[1];
+
                     paramCounter++;
                     paramCounter++;
                     isGood &= (paramCounter == header.size()); // die is good only if all parameters are found
-                    // isGood &= (std::count(str.begin(), str.end(), ',') == header.size()-1); // die is good only if all parameters are found
                     if (isGood) {
                         buf.append(str);
                     }
                     paramCounter = 0; // reset parameter counter for new die
-                    isGood = true; // reset die status for new die
+                    isGood = false; // reset die status for new die
                     str.clear();
-                    string_view val =  split(line, " ,")[1];
                     str.append("\n").append(lotname).append(",").append(val.data(), val.size());
                 } else if (starts_with(line,"27 ")) { // site number
                     paramCounter++;
-                    string_view val = split(line)[1];
+                  vector<string_view> splits = split(line);
+                  if (splits.size() != 2) {
+                      continue;
+                  }
+                    string_view val = splits[1];
                     str.append(",").append(val.data(), val.size());
                 } else if (starts_with(line,"28 ")) { // bincode
                     paramCounter++;
-                    int bin = atoi(split(line)[1].data());
+                  vector<string_view> splits = split(line);
+                  if (splits.size() != 2) {
+                      continue;
+                  }
+                    string_view val = splits[1];
+                
+                    if (!is_uint(val.data())) {
+                        continue;
+                    }
+                    int bin = atoi(val.data());
                     bool isPass = (bin < 200);
-                    isGood &= isPass;
+                    isGood = isPass;
                     str.append(",").append(isPass ? "P" : "F");
                 } else if (starts_with(line,"53 ")) { // part id
                     paramCounter++;
-                    string_view val = split(line)[1];
+                    vector<string_view> splits = split(line);
+                  if (splits.size() != 2) {
+                      continue;
+                  }
+                    string_view val = splits[1];
                     str.append(",").append(val.data(), val.size());
                 }
             }
             paramCounter++;
             paramCounter++;
             isGood &= (paramCounter == header.size()); // die is good only if all parameters are found
-            // isGood &= (std::count(str.begin(), str.end(), ',') == header.size()-1); // die is good only if all parameters are found
             if (isGood) {
                 buf.append(str);
             }
@@ -281,6 +307,7 @@ std::string Convert_v1(const std::string &device, const std::string &lot, const 
 
     return buf;
 }
+
 
 std::string Convert_v2(const std::string &device, const std::string &lot, const std::string &step, const std::vector<std::string> &parameters, bool onlyPass=true, bool exactLot=false) {
   using namespace std;
@@ -369,12 +396,17 @@ std::string Convert_v2(const std::string &device, const std::string &lot, const 
         unordered_map<string, string> str;
 #endif
         string lotname;
-        bool isPass = false;
+        bool isGood = false;
 
         while(getline(log, line)) {
           // lotname is in header of the file
           if (starts_with(line, "1 ")) {
-            lotname = string(split(line)[1]);
+            const std::vector<string_view> &splits = split(line);
+            if (splits.size() != 2) {
+                continue;
+            }
+            string_view val = splits[1];
+            lotname = string(val.data(), val.size());
             break;
           }
         }
@@ -382,6 +414,9 @@ std::string Convert_v2(const std::string &device, const std::string &lot, const 
           while(getline(log, line)) {
               if (starts_with(line,"30 ")) { // evaluated parameters
                   const std::vector<string_view> &splits = split(line);
+                  if (splits.size() != 4) {
+                      continue;
+                  }
 #if __cplusplus >= 202002L
                   if (codes.find(splits[1]) != codes.end())
 #else
@@ -390,33 +425,61 @@ std::string Convert_v2(const std::string &device, const std::string &lot, const 
                   {
                     string_view code = splits[1];
                     string_view val = splits[3];
-                    str[codes[string(code)]] = string(val);
+                    str[codes[string(code.data(), code.size())]] = val;
                   }
 
                 } else if (starts_with(line,"38 ")) { // new part, contains part is and time
-                  if (!str.empty() && isPass) {
+                  vector<string_view> splits = split(line, " ,");
+                  if (splits.size() != 3) {
+                      continue;
+                  }
+                  string_view val =  splits[1];
+
+                  isGood &= (str.size() == header.size());
+                  if (!str.empty() && isGood) {
                     for (auto &it : header) {
                         buf.append(str[it]).append(",");
                     }
+
                     buf[buf.size()-1] = '\n'; // replace last comma with newline
                   }
+                    isGood = false; // reset die status for new die
                     str.clear();
-                    string_view val =  split(line, " ,")[1];
                     str["lot id"] = lotname;
                     str["die timestamp"] = string(val.data(), val.size());
                 } else if (starts_with(line,"27 ")) { // site number
-                    string_view val = split(line)[1];
+                  vector<string_view> splits = split(line);
+                  if (splits.size() != 2) {
+                      continue;
+                  }
+                    string_view val = splits[1];
                     str["site number"] = string(val.data(), val.size());
                 } else if (starts_with(line,"28 ")) { // bincode
-                    int bin = atoi(split(line)[1].data());
-                    isPass = (bin < 200);
+                  vector<string_view> splits = split(line);
+                  if (splits.size() != 2) {
+                      continue;
+                  }
+                    string_view val = splits[1];
+                
+                    if (!is_uint(val.data())) {
+                        continue;
+                    }
+                    int bin = atoi(val.data());
+                    bool isPass = (bin < 200);
+                    isGood = isPass;
                     str["bincode type"] = isPass ? "P" : "F";
                 } else if (starts_with(line,"53 ")) { // part id
-                    string_view val = split(line)[1];
+                  vector<string_view> splits = split(line);
+                  if (splits.size() != 2) {
+                      continue;
+                  }
+                    string_view val = splits[1];
                     str["part id"] = string(val.data(), val.size());
                 }
             }
-            if (!str.empty() && isPass) {
+
+            isGood &= (str.size() == header.size());
+            if (!str.empty() && isGood) {
               for (auto &it : header) {
                   buf.append(str[it]).append(",");
               }

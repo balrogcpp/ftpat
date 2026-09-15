@@ -87,14 +87,14 @@ std::string DownloadLog(const std::string &device, const std::string &lot, const
     return "";
 }
 
-struct Settings {
-  std::string device;
-  std::string baselot;
-  std::string lot;
-  std::vector<std::string> conList;
-  std::vector<std::string> patlist;
-  std::vector<std::vector<std::string>> mdlist;
-};
+// struct Settings {
+//   std::string device;
+//   std::string baselot;
+//   std::string lot;
+//   std::vector<std::string> conList;
+//   std::vector<std::string> patlist;
+//   std::vector<std::vector<std::string>> mdlist;
+// };
 
 
 
@@ -141,7 +141,7 @@ rapidcsv::Document FilterLog(const std::string &device, const std::string &basel
   futures.reserve(conList.size());
   for (size_t i = 0; i < conList.size(); ++i) {
     futures.emplace_back(std::async(std::launch::async, [&, i]() {
-      std::string log = Convert_v1(device, lot, conList[i], parameters[conList[i]], useSublot);
+      std::string log = Convert_v1(device, lot, conList[i], parameters[conList[i]], exactLot);
       write_to_file(HOME_DIR + lot + "_" + conList[i] + ".csv", log);
       std::istringstream istr(log);
       logs[i] = rapidcsv::Document(istr, rapidcsv::LabelParams(0, -1));
@@ -337,7 +337,7 @@ void PerformUD(const rapidcsv::Document &logFile, const std::string &lot, const 
     }
 
     string buf;
-    auto ins = back_inserter(buf);
+    auto inserter = back_inserter(buf);
     buf = "id";
     for (const auto &param : parameters) {
       buf.append(",").append(param).append("_PAT");
@@ -349,10 +349,10 @@ void PerformUD(const rapidcsv::Document &logFile, const std::string &lot, const 
       const vector<uint64_t> &ids = it.second;
 
       for (size_t i = 0; i < ids.size(); ++i) {
-        format_to(ins, "{}", ids[i]);
+        format_to(inserter, "{}", ids[i]);
         for (const auto &jt : parameters) {
           const vector<Real> &patValues = columns[split][jt];
-          format_to(ins, ",{:.9f}", patValues[i]);
+          format_to(inserter, ",{:.9f}", patValues[i]);
         }
         buf.append("\n");
       }
@@ -383,7 +383,7 @@ void PerformMD(const rapidcsv::Document &logFile, const std::string &lot, const 
   }
 
   string buf;
-  auto ins= back_inserter(buf);
+  auto inserter = back_inserter(buf);
   buf = "id";
   for (const auto &it : eval) {
     buf.append(",");
@@ -396,7 +396,7 @@ void PerformMD(const rapidcsv::Document &logFile, const std::string &lot, const 
       buf.append(id);
 
       for (const string &evalName : eval) {
-        format_to(ins, ",{:.9f}", columns[evalName][i]);
+        format_to(inserter, ",{:.9f}", columns[evalName][i]);
       }
       buf.append("\n");
     }
