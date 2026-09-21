@@ -30,12 +30,6 @@ using namespace std;
 const static string HOME_DIR = "./pat/";
 
 
-// helpers
-namespace {
-
-
-
-} // anonymous namespace
 
 namespace PAT {
 
@@ -97,13 +91,7 @@ std::string DownloadLog(const std::string &device, const std::string &lot, const
 // };
 
 
-
-rapidcsv::Document FilterLog(const std::string &device, const std::string &baselot, const std::string &lot, const std::vector<std::string> &conList,
-     const std::vector<std::string> &patlist, const std::vector<std::vector<std::string>> &mdlist, bool exactLot) {
-  std::unordered_map<std::string, std::string> merged;
-  std::unordered_map<std::string, std::string> uniqueID;
-  const bool useSublot = (baselot != lot);
-
+map<string, vector<string>> mapParameters(const std::vector<std::string> &conList, const std::vector<std::string> &patlist, const std::vector<std::vector<std::string>> &mdlist) {
   map<string, vector<string>> parameters;
   for (const auto &it : patlist) {
     size_t pos = it.find_last_of('_');
@@ -129,6 +117,19 @@ rapidcsv::Document FilterLog(const std::string &device, const std::string &basel
       }
     }
   }
+  return parameters;
+
+}
+
+
+
+rapidcsv::Document FilterLog(const std::string &device, const std::string &baselot, const std::string &lot, const std::vector<std::string> &conList,
+     const std::vector<std::string> &patlist, const std::vector<std::vector<std::string>> &mdlist, bool exactLot) {
+  std::unordered_map<std::string, std::string> merged;
+  std::unordered_map<std::string, std::string> uniqueID;
+  const bool useSublot = (baselot != lot);
+map<string, vector<string>> parameters = mapParameters(conList, patlist, mdlist);
+
 
 
   if (!fs::is_directory(HOME_DIR)) {
@@ -142,7 +143,7 @@ rapidcsv::Document FilterLog(const std::string &device, const std::string &basel
   for (size_t i = 0; i < conList.size(); ++i) {
     futures.emplace_back(std::async(std::launch::async, [&, i]() {
       std::string log = Convert_v1(device, lot, conList[i], parameters[conList[i]], exactLot);
-      write_to_file(HOME_DIR + lot + "_" + conList[i] + ".csv", log);
+      async_write(HOME_DIR + lot + "_" + conList[i] + ".csv", log);
       std::istringstream istr(log);
       logs[i] = rapidcsv::Document(istr, rapidcsv::LabelParams(0, -1));
     }));
@@ -386,8 +387,7 @@ void PerformMD(const rapidcsv::Document &logFile, const std::string &lot, const 
   auto inserter = back_inserter(buf);
   buf = "id";
   for (const auto &it : eval) {
-    buf.append(",");
-    buf.append(it);
+    buf.append(",").append(it);
   }
   buf.append("\n");
 
