@@ -123,28 +123,29 @@ std::vector<Real> calculateMD(const std::vector<std::vector<Real>> &values) {
   }
 
   using namespace Eigen;
+  using MatrixR = Matrix<Real, Dynamic, Dynamic>;
+  using VectorR = Matrix<Real, Dynamic, 1>;
 
-  MatrixXf mat;
-  size_t vsize = values[0].size();
-  size_t msize = values.size();
-  mat.resize(vsize, msize);
+  const size_t vsize = values[0].size();
+  const size_t msize = values.size();
+  MatrixR mat(vsize, msize);
 
   for(size_t i = 0; i < msize; ++i) {
-    std::vector<Real> &v = const_cast<std::vector<Real>&>(values[i]);
-    mat.col(i) = Map<VectorXf, Unaligned>(v.data(), v.size());
+    mat.col(i) = Map<const VectorR, Unaligned>(values[i].data(), vsize);
   }
 
-  VectorXf means = mat.colwise().mean();
-  MatrixXf cov = covariance(mat);
-  MatrixXf invCov = cov.inverse();
+  const VectorR means = mat.colwise().mean();
+  const MatrixR cov = covariance(mat);
+  const LDLT<MatrixR> ldlt = cov.ldlt();
 
   std::vector<Real> out;
   out.reserve(vsize);
   for (size_t i = 0; i < vsize; ++i) {
-    VectorXf v = mat.row(i).transpose() - means;
-    Real md = sqrt(v.transpose() * invCov * v);
+    const VectorR v = mat.row(i).transpose() - means;
+    Real d2 = v.dot(ldlt.solve(v));
+    Real md = std::sqrt(std::max(Real{0.0}, d2));
     out.push_back(md);
-  }   
+  }
 
   return out;
 }

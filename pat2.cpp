@@ -377,10 +377,10 @@ void PerformMD(const rapidcsv::Document &logFile, const std::string &lot, const 
 
     for (const string &param : plist) {
       vector<Real> &&v = logFile.GetColumn<Real>(param);
-      values.emplace_back(std::move(v));
+      values.emplace_back(v);
     }
 
-    columns[eval[&plist - &parameters[0]]] = calculateMD(std::move(values));
+    columns[eval[&plist - &parameters[0]]] = calculateMD(values);
   }
 
   string buf;
@@ -391,15 +391,15 @@ void PerformMD(const rapidcsv::Document &logFile, const std::string &lot, const 
   }
   buf.append("\n");
 
-    for (size_t i = 0; i < chipids.size(); ++i) {
-      const string &id = chipids[i];
-      buf.append(id);
+  for (size_t i = 0; i < chipids.size(); ++i) {
+    const string &id = chipids[i];
+    buf.append(id);
 
-      for (const string &evalName : eval) {
-        format_to(inserter, ",{:.9f}", columns[evalName][i]);
-      }
-      buf.append("\n");
+    for (const string &evalName : eval) {
+      format_to(inserter, ",{:.9f}", columns[evalName][i]);
     }
+    buf.append("\n");
+  }
 
   async_write(HOME_DIR+"MD_"+lot+".csv", buf);
 }
