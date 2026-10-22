@@ -81,19 +81,13 @@ std::string DownloadLog(const std::string &device, const std::string &lot, const
     return "";
 }
 
-// struct Settings {
-//   std::string device;
-//   std::string baselot;
-//   std::string lot;
-//   std::vector<std::string> conList;
-//   std::vector<std::string> patlist;
-//   std::vector<std::vector<std::string>> mdlist;
-// };
 
-
-map<string, vector<string>> mapParameters(const std::vector<std::string> &conList, const std::vector<std::string> &patlist, const std::vector<std::vector<std::string>> &mdlist) {
+map<string, vector<string>> mapParameters(const Receipt &receipt) {
+  const vector<string> &conList = receipt.conList;
   map<string, vector<string>> parameters;
-  for (const auto &it : patlist) {
+
+  for (const auto &jt : receipt.parameters) {
+    for(const string &it : jt.second) {
     size_t pos = it.find_last_of('_');
     string left  = it.substr(0, pos); //left is parameter
     string right = it.substr(pos + 1); // right is condition/step
@@ -103,32 +97,24 @@ map<string, vector<string>> mapParameters(const std::vector<std::string> &conLis
         parameter_list.push_back(left);
       }
     }
+   }
   }
-  for (const auto &jt : mdlist) {
-    for (const auto &it : jt) {
-      size_t pos = it.find_last_of('_');
-      string left  = it.substr(0, pos);
-      string right = it.substr(pos + 1);
-      if (pos != std::string::npos && find(conList.begin(), conList.end(), right) != conList.end()) {
-        auto &parameter_list = parameters[right];
-        if (find(parameter_list.begin(), parameter_list.end(), left) == parameter_list.end()) {
-          parameter_list.push_back(left);
-        }
-      }
-    }
-  }
-  return parameters;
 
+
+  return parameters;
 }
 
 
 
-rapidcsv::Document FilterLog(const std::string &device, const std::string &baselot, const std::string &lot, const std::vector<std::string> &conList,
-     const std::vector<std::string> &patlist, const std::vector<std::vector<std::string>> &mdlist, bool exactLot) {
+rapidcsv::Document FilterLog(const Receipt &receipt, bool exactLot) {
+  const string &device = receipt.device;
+  const string &baselot = receipt.baselot;
+  const string &lot = receipt.lot;
   std::unordered_map<std::string, std::string> merged;
   std::unordered_map<std::string, std::string> uniqueID;
   const bool useSublot = (baselot != lot);
-map<string, vector<string>> parameters = mapParameters(conList, patlist, mdlist);
+  const vector<string> &conList = receipt.conList;
+  map<string, vector<string>> parameters = mapParameters(receipt);
 
 
 
@@ -295,19 +281,28 @@ map<string, vector<string>> parameters = mapParameters(conList, patlist, mdlist)
 
 typedef float Real;
 
-void PerformUD(const rapidcsv::Document &logFile, const std::string &lot, const std::vector<std::string> &parameters, const std::vector<std::string> &separate) {
-  if (logFile.GetRowCount() < 2 || parameters.empty()) {
-    return;
+rapidcsv::Document PerformUD(const rapidcsv::Document &logFile, const Receipt &receipt, const std::vector<std::string> &separate) {
+  if (logFile.GetRowCount() < 2 || receipt.parameters.empty()) {
+    return rapidcsv::Document{};
   }
 
 
   vector<size_t> idx; // parameter indexes
   vector<size_t> idx2; // separator indexes
-  for(const auto &it : parameters) {
-    idx.push_back(logFile.GetColumnIdx(it)+1);
+  vector<string> eval;
+  vector<string> parameters;
+  for(const auto &it : receipt.parameters) {
+    if (it.second.size() == 1) {
+      idx.push_back(logFile.GetColumnIdx(it.second[0])+1);
+      parameters.push_back(it.second[0]);
+      eval.push_back(it.first);
+    }
   }
   for(const auto &it : separate) {
     idx2.push_back(logFile.GetColumnIdx(it)+1);
+  }
+  if (parameters.empty()) {
+    return rapidcsv::Document{};
   }
 
 
@@ -340,8 +335,8 @@ void PerformUD(const rapidcsv::Document &logFile, const std::string &lot, const 
     string buf;
     auto inserter = back_inserter(buf);
     buf = "id";
-    for (const auto &param : parameters) {
-      buf.append(",").append(param).append("_PAT");
+    for (const auto &param : eval) {
+      buf.append(",").append(param);
     }
     buf.append("\n");
 
@@ -359,18 +354,31 @@ void PerformUD(const rapidcsv::Document &logFile, const std::string &lot, const 
       }
     }
     
-    async_write(HOME_DIR + "PAT_" + lot + ".csv", buf);
+    async_write(HOME_DIR + "PAT_" + receipt.lot + ".csv", buf);
+    std::istringstream istr(buf);
+    return rapidcsv::Document(istr, rapidcsv::LabelParams(0, 0));
 }
 
 
 
-void PerformMD(const rapidcsv::Document &logFile, const std::string &lot, const std::vector<std::vector<std::string>> &parameters, const std::vector<std::string> &eval) {
-  if (logFile.GetRowCount() < 2 || parameters.empty()) {
-    return;
+rapidcsv::Document PerformMD(const rapidcsv::Document &logFile, const Receipt &receipt) {
+  if (logFile.GetRowCount() < 2 || receipt.parameters.empty()) {
+    return rapidcsv::Document{};
   }
 
   map<string, vector<Real>> columns;
   vector<string> chipids = logFile.GetRowNames();
+  vector<string> eval;
+  vector<vector<string>> parameters;
+  for(const auto &it : receipt.parameters) {
+    if (it.second.size() > 1) {
+      eval.push_back(it.first);
+      parameters.push_back(it.second);
+    }
+  }
+  if (parameters.empty()) {
+    return rapidcsv::Document{};
+  }
 
   for (const vector<string> &plist : parameters) {
     vector<vector<Real>> values;
@@ -401,6 +409,8 @@ void PerformMD(const rapidcsv::Document &logFile, const std::string &lot, const 
     buf.append("\n");
   }
 
-  async_write(HOME_DIR+"MD_"+lot+".csv", buf);
+  async_write(HOME_DIR+"MD_"+receipt.lot+".csv", buf);
+  std::istringstream istr(buf);
+  return rapidcsv::Document(istr, rapidcsv::LabelParams(0, 0));
 }
 } // namespace PAT
