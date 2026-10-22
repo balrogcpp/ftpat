@@ -1,7 +1,7 @@
 #include <map>
 #include <string>
 #include <vector>
-// #include "dataframe.hpp"
+#include "dataset.hpp"
 
 namespace rapidcsv {
   class Document;
